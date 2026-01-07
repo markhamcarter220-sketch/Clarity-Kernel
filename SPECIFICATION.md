@@ -1,7 +1,7 @@
 # CLARITY KERNEL SPECIFICATION
 ## Safety-Critical Reasoning Governance Framework
 ### with Bounded-Interface SAT Enforcement (w ≤ 3)
-**Version:** v1.1.0
+**Version:** v1.2.0
 **Status:** Canonical / Implementer-Facing
 **Scope:** Abstract / AI-native (no industry metaphors)
 
@@ -302,7 +302,9 @@ Kernel outputs must be explicit and persistent:
 - **BLOCKED**: action forbidden (which invariant(s))
 - **ABNORMAL**: override active (persistent warning)
 - **STOPPED**: execution halted (immediate stop semantics)
-- **NEEDS_HIL**: specific variables/authority confirmation required
+- **DECOMPOSE**: operation exceeds interface width (`w > 3`) but admits lossless decomposition into sub-operations with `w ≤ 3`
+- **ESCALATE**: operation exceeds interface width and cannot be decomposed without violating kernel constraints; human authorization required
+- **NEEDS_HIL**: (deprecated, retained for backward compatibility) alias of ESCALATE for non-width-specific cases
 
 The kernel must never emit ALLOWED while any invariant is unsatisfied.
 
@@ -372,6 +374,124 @@ If uncertain:
 - escalate to HIL
 
 Silence is correct.
+
+---
+
+## 18. INTERFACE WIDTH VIOLATION STRATEGIES
+
+### 18.1 Definition
+
+Let `w` be the interface width of a requested operation, defined as the number of simultaneously coupled, independently meaningful variables crossing the kernel boundary.
+
+The invariant remains unchanged:
+
+**Invariant W-1 (Interface Width Limit)**
+If `w > 3`, the operation must not execute.
+
+This section defines response strategies, not execution permissions.
+
+---
+
+### 18.2 Strategy Enumeration
+
+When `w > 3`, the kernel MUST select exactly one of the following strategies:
+- **DECOMPOSE**
+- **ESCALATE**
+
+No other strategies are permitted.
+
+---
+
+### 18.3 Strategy: DECOMPOSE
+
+**Description**
+
+DECOMPOSE indicates that the requested operation exceeds the allowable interface width but admits a lossless decomposition into multiple sub-operations, each with `w ≤ 3`.
+
+**Required Conditions**
+
+The kernel MAY return DECOMPOSE if and only if:
+
+1. A valid partition of the operation exists such that:
+   - Each sub-operation has `w ≤ 3`
+   - No semantic assumptions are introduced
+   - No hidden coupling is required
+
+2. The decomposition preserves:
+   - Authority boundaries
+   - Semantic meaning
+   - Execution ordering constraints (if any)
+
+If any condition cannot be proven, DECOMPOSE MUST NOT be returned.
+
+**Semantics**
+- DECOMPOSE is non-authoritative
+- It does not approve execution
+- It signals that restructuring is required before re-submission
+
+**Canonical Meaning**
+
+"This request exceeds the maximum interface width. A lossless decomposition into smaller, valid sub-requests is required before evaluation may proceed."
+
+---
+
+### 18.4 Strategy: ESCALATE
+
+**Description**
+
+ESCALATE indicates that the requested operation exceeds the allowable interface width and cannot be safely decomposed without introducing assumptions, semantic loss, or hidden authority transfer.
+
+**Required Conditions**
+
+The kernel MUST return ESCALATE if:
+- No valid decomposition can be proven, OR
+- Decomposition would require:
+  - Implicit prioritization
+  - Assumption of intent
+  - Introduction of new authority
+  - Semantic interpretation beyond provided input
+
+**Semantics**
+- ESCALATE is a hard stop
+- Execution is forbidden
+- Human-in-the-loop (HIL) review is required
+
+**Canonical Meaning**
+
+"This request exceeds the maximum interface width and cannot be decomposed without violating kernel constraints. Human authorization is required."
+
+---
+
+### 18.5 Prohibited Behavior
+
+When `w > 3`, the kernel MUST NOT:
+- Attempt execution
+- Implicitly decompose without proof
+- Suggest "best" decompositions
+- Optimize or rank decomposition options
+- Auto-escalate execution authority
+
+All outcomes are non-executing.
+
+---
+
+### 18.6 Relationship to NEEDS_HIL
+
+NEEDS_HIL is deprecated as a sole default response for width violations.
+
+- ESCALATE replaces NEEDS_HIL for non-decomposable cases
+- DECOMPOSE explicitly captures decomposable cases
+- NEEDS_HIL MAY be retained as an alias of ESCALATE for backward compatibility but MUST NOT be the only width-related outcome
+
+---
+
+### 18.7 Summary Rule (Normative)
+
+If `w > 3`:
+- If and only if a lossless decomposition into sub-requests with `w ≤ 3` can be proven → return DECOMPOSE
+- Otherwise → return ESCALATE
+
+Under no circumstances may execution proceed while `w > 3`.
 
 ---
 
