@@ -206,7 +206,8 @@ clarity_kernel/
 ├── invariants.py       # Seven hard invariants + validators
 ├── state_machine.py    # State transitions (Normal/Continuous/Abnormal)
 ├── control_modes.py    # Momentary vs Continuous authorization
-└── logging.py          # Immutable append-only audit log
+├── logging.py          # Immutable append-only audit log
+└── ail.py              # Adaptive Interaction Layer (optional, non-normative)
 ```
 
 ## Implementer Rules (Mandatory)
@@ -229,6 +230,54 @@ If uncertain:
 > No authority → no decision
 > If w > 3 → decompose, escalate, or stop
 > No attention → no execution
+
+## AIL Wrapper (Optional, Non-Normative)
+
+The Adaptive Interaction Layer (AIL) provides an optional wrapper for interactive clarification without modifying SSL behavior.
+
+### Key Points
+
+- **AIL is NOT part of the canonical SSL**
+- SSL remains the authoritative decision layer
+- AIL provides UX conveniences only
+- All invariants and STOP semantics remain unchanged
+
+### Usage
+
+```python
+from clarity_kernel import ClarityKernel, AILWrapper, AILSession, AILResponseType
+
+# Create kernel and AIL wrapper
+kernel = ClarityKernel()
+session = AILSession(max_clarifications=2)
+ail = AILWrapper(kernel, session)
+
+# Process request through AIL
+response = ail.step(request)
+
+if response.response_type == AILResponseType.CLARIFY:
+    print(response.message)  # "To proceed without assumptions, provide..."
+elif response.response_type == AILResponseType.TAD:
+    print(response.message)  # Terminal Ambiguity Declaration
+elif response.response_type == AILResponseType.SILENCE:
+    pass  # No output after TAD
+elif response.response_type == AILResponseType.PASSTHROUGH:
+    # SSL decision unchanged
+    if response.ssl_response:
+        print(f"Permission granted: {response.ssl_response.granted}")
+```
+
+### Behavior
+
+When ambiguity is detected (I-1 violation):
+1. First request: CLARIFY
+2. Second request (same input): CLARIFY
+3. Third request (same input): TAD (Terminal Ambiguity Declaration)
+4. Fourth+ request (same input): SILENCE
+
+New input or resolved ambiguity resets the session.
+
+Non-ambiguity STOPs (I-2, I-3, etc.) pass through unchanged.
 
 ## License
 

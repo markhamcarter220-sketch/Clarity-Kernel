@@ -89,6 +89,14 @@ from .logging import (
     set_default_logger,
 )
 
+# AIL (Adaptive Interaction Layer) - Non-Normative
+from .ail import (
+    AILSession,
+    AILWrapper,
+    AILResponse,
+    AILResponseType,
+)
+
 __all__ = [
     # Core SSL
     "ClarityKernel",
@@ -142,4 +150,9 @@ __all__ = [
     "LogMutationAttempt",
     "get_default_logger",
     "set_default_logger",
+    # AIL (Non-Normative)
+    "AILSession",
+    "AILWrapper",
+    "AILResponse",
+    "AILResponseType",
 ]
