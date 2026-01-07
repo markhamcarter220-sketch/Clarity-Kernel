@@ -94,11 +94,6 @@ class AILSession:
         if self.terminal_declared:
             return False
 
-        # If same input as last time, we're looping
-        if self.last_ambiguity_fingerprint == fingerprint:
-            # Already tried clarifying this exact input
-            return False
-
         # Within budget, can clarify
         if self.clarification_attempts < self.max_clarifications:
             self.last_ambiguity_fingerprint = fingerprint
@@ -107,6 +102,7 @@ class AILSession:
 
         # Budget exhausted - declare terminal ambiguity
         self.terminal_declared = True
+        self.last_ambiguity_fingerprint = fingerprint
         return False
 
     def reset(self) -> None:
@@ -156,12 +152,6 @@ class AILWrapper:
         """
         # Compute fingerprint of this request
         fingerprint = self._compute_fingerprint(request)
-
-        # Check if this is new input (different from last ambiguity)
-        if self.session.last_ambiguity_fingerprint is not None:
-            if fingerprint != self.session.last_ambiguity_fingerprint:
-                # New input - reset session
-                self.session.reset()
 
         try:
             # Call SSL kernel

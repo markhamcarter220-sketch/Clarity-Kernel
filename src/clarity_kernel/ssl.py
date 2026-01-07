@@ -357,17 +357,19 @@ class ClarityKernel:
             satisfied_invariants.add("I-6")
 
             # ================================================================
-            # STEP 6: Validate I-4 (Truth Invariant)
+            # STEP 6: Mark I-4 and I-5 as satisfied
             # ================================================================
-            # We're about to claim ALLOWED, so ensure all invariants satisfied
-            all_invariants = get_all_invariant_ids()
-            validate_truth(satisfied_invariants, all_invariants, claiming_allowed=True)
+            # I-4 (Truth Invariant): We're not claiming ALLOWED while any invariant is unsatisfied
+            # (if we got here, all checked invariants passed)
             satisfied_invariants.add("I-4")
 
-            # I-5 (Logging Invariant) is satisfied if we reach here
-            # (all events have been logged)
+            # I-5 (Logging Invariant): All events have been logged
             validate_logging(event_logged=True, event_type="permission_request")
             satisfied_invariants.add("I-5")
+
+            # Validate truth invariant: ensure all invariants are satisfied before claiming ALLOWED
+            all_invariants = get_all_invariant_ids()
+            validate_truth(satisfied_invariants, all_invariants, claiming_allowed=True)
 
             # ================================================================
             # STEP 7: Determine Control Mode
