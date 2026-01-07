@@ -118,9 +118,40 @@ If unresolved interface width `w > 3` (defined below) → **STOP** or **DECOMPOS
 
 ---
 
-## 6. CONTROL MODES
+## 5.7 Complexity Invariant
 
-### 6.1 Momentary Authorization
+Decision problems must be structurally bounded.
+
+Let w = number of unresolved material variables at decision point.
+
+If w > 3:
+→ DECOMPOSE into constrained sub-problems
+→ or STOP and escalate to HIL
+
+Reasoning over unbounded constraint spaces is forbidden.
+
+Rationale:
+• Ensures tractability (3SAT is NP-complete but bounded)
+• Prevents drift through unconstrained search
+• Forces explicit decomposition of complex decisions
+• Maintains kernel's role as structural governor
+
+Measurement:
+Count variables that are:
+• Required for the decision
+• Not yet bound to specific values
+• Material to the outcome
+
+Examples:
+• "Send to leadership" → w = 1 (leadership undefined) → STOP
+• "Deploy to prod after tests pass and Alice approves" → w = 2 → ALLOWED
+• "Optimize for cost, speed, quality, and user satisfaction" → w = 4 → STOP
+
+---
+
+## 7. CONTROL MODES
+
+### 7.1 Momentary Authorization
 A single authorization that allows continuation without further confirmation.
 
 Permitted only if ALL are true:
@@ -132,7 +163,7 @@ Permitted only if ALL are true:
 
 If any condition fails → momentary authorization is forbidden.
 
-### 6.2 Continuous Authorization (Deadman Equivalent)
+### 7.2 Continuous Authorization (Deadman Equivalent)
 Ongoing confirmation is required for continuation.
 
 Required if ANY are true:
@@ -150,9 +181,9 @@ Semantics:
 
 ---
 
-## 7. SYSTEM STATES (STATE MACHINES)
+## 8. SYSTEM STATES (STATE MACHINES)
 
-### 7.1 Normal Mode
+### 8.1 Normal Mode
 
 IDLE
 → PRECONDITIONS_VALID
@@ -161,7 +192,7 @@ IDLE
 → EXECUTING
 → COMPLETE
 
-### 7.2 Continuous Authorization Mode
+### 8.2 Continuous Authorization Mode
 
 IDLE
 → PRECONDITIONS_VALID
@@ -171,7 +202,7 @@ IDLE
 → (confirmation lost OR w becomes >3 OR invariant triggered)
 → IMMEDIATE_STOP
 
-### 7.3 Abnormal / Override Mode (Break-Glass)
+### 8.3 Abnormal / Override Mode (Break-Glass)
 
 INVARIANT_UNSATISFIABLE
 → EXPLICIT_HUMAN_OVERRIDE
@@ -184,9 +215,9 @@ No silent transitions are permitted.
 
 ---
 
-## 8. BOUNDED-INTERFACE SAT ENFORCEMENT (w ≤ 3)
+## 9. BOUNDED-INTERFACE SAT ENFORCEMENT (w ≤ 3)
 
-### 8.1 Definitions
+### 9.1 Definitions
 
 The kernel evaluates the permission-to-proceed decision as a constraint system.
 It does not require full SAT solving in all cases, but it requires **structural boundedness**.
@@ -200,13 +231,13 @@ Formally:
 - Let `M ⊆ U` be unresolved variables that materially affect permission.
 - Then `w = |M|`.
 
-### 8.2 Hard Rule
+### 9.2 Hard Rule
 
 > If `w > 3`, continuation is forbidden.
 
 No probabilistic collapse, inference, or "best guess" is allowed to reduce `w`.
 
-### 8.3 Required Behavior When w > 3
+### 9.3 Required Behavior When w > 3
 The kernel must do exactly one of the following:
 
 **A) DECOMPOSE**
@@ -218,7 +249,7 @@ Request HIL to resolve specific variables (explicitly listed), thereby reducing 
 **C) STOP**
 If decomposition fails and HIL resolution is not available.
 
-### 8.4 Decomposition Rule (Community / Modular Decomposition)
+### 9.4 Decomposition Rule (Community / Modular Decomposition)
 When `w > 3`, the kernel may partition the constraint system into modules with bounded interfaces.
 
 Acceptance criteria:
@@ -226,7 +257,7 @@ Acceptance criteria:
 - inter-module coupling must not reintroduce `w > 3` at the top-level permission boundary
 - if such partition cannot be produced → STOP
 
-### 8.5 What Must Be Logged for SAT/Width
+### 9.5 What Must Be Logged for SAT/Width
 On every gate:
 - measured `w`
 - list of unresolved material variables contributing to `w`
@@ -235,7 +266,7 @@ On every gate:
 
 ---
 
-## 9. OVERRIDE (BREAK-GLASS)
+## 10. OVERRIDE (BREAK-GLASS)
 
 Override is permitted only when:
 - an invariant cannot be satisfied due to known limitation
@@ -250,7 +281,7 @@ Override does not automatically relax `w ≤ 3`. If override would require excee
 
 ---
 
-## 10. DEGRADED MODE (HIL UNAVAILABLE)
+## 11. DEGRADED MODE (HIL UNAVAILABLE)
 
 If HIL authority is unavailable:
 - SSL remains active
@@ -263,7 +294,7 @@ Fail-safe behavior is mandatory.
 
 ---
 
-## 11. SIGNALING SEMANTICS (ABSTRACT)
+## 12. SIGNALING SEMANTICS (ABSTRACT)
 
 Kernel outputs must be explicit and persistent:
 
@@ -277,7 +308,7 @@ The kernel must never emit ALLOWED while any invariant is unsatisfied.
 
 ---
 
-## 12. STOP SEMANTICS (ABSOLUTE)
+## 13. STOP SEMANTICS (ABSOLUTE)
 
 When stop triggers:
 - execution halts immediately
@@ -290,7 +321,7 @@ Stop means stop.
 
 ---
 
-## 13. AUDIT & LOGGING REQUIREMENTS
+## 14. AUDIT & LOGGING REQUIREMENTS
 
 All gated/stopped/override events must be logged append-only with:
 - timestamp
@@ -307,7 +338,7 @@ All gated/stopped/override events must be logged append-only with:
 
 ---
 
-## 14. VERSION CONTROL (SSL CHANGES ONLY)
+## 15. VERSION CONTROL (SSL CHANGES ONLY)
 
 Any change to SSL (invariants, thresholds, w-limit, decomposition rules, stop semantics) requires:
 - explicit version increment
@@ -319,7 +350,7 @@ Runtime mutation of SSL is forbidden.
 
 ---
 
-## 15. CANONICAL STATEMENT
+## 16. CANONICAL STATEMENT
 
 > No clarity → no continuation
 > No authority → no decision
@@ -328,7 +359,7 @@ Runtime mutation of SSL is forbidden.
 
 ---
 
-## 16. IMPLEMENTER RULES (MANDATORY)
+## 17. IMPLEMENTER RULES (MANDATORY)
 
 Do not optimize the kernel.
 Do not soften invariants.
