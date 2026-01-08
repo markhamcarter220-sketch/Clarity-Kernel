@@ -33,7 +33,7 @@ from pathlib import Path
 # CONSTANTS
 # ============================================================================
 
-SSL_VERSION = "v1.1.0"  # Must match SPECIFICATION.md
+SSL_VERSION = "v1.2.0"  # Must match SPECIFICATION.md
 
 
 # ============================================================================
@@ -53,6 +53,7 @@ class EventType(Enum):
     WIDTH_EVALUATION = "width_evaluation"
     DECOMPOSITION_ATTEMPT = "decomposition_attempt"
     ESCALATION = "escalation"
+    LTC_TRANSFER_EVALUATED = "ltc_transfer_evaluated"
 
 
 class ResolutionOutcome(Enum):
@@ -425,6 +426,50 @@ class AuditLogger:
             resolution_outcome=ResolutionOutcome.STOP,
             context={"triggered_by": triggered_by, **(context or {})},
             message=reason
+        )
+        self.log(entry)
+
+    def log_ltc_evaluation(
+        self,
+        source_domain: str,
+        target_domain: str,
+        logic_framework: str,
+        verdict: str,
+        reason_codes: list[str],
+        failed_invariants: list[str],
+        kernel_state: str,
+        context: Optional[dict[str, Any]] = None
+    ) -> None:
+        """
+        Logs an LTC (Legitimate Transfer Constraint) evaluation.
+
+        Args:
+            source_domain: Domain where logic originates
+            target_domain: Domain where logic will be applied
+            logic_framework: Description of logic being transferred
+            verdict: LTC verdict (ALLOW/DENY/SILENCE)
+            reason_codes: Codes explaining verdict
+            failed_invariants: Invariants that failed preservation test
+            kernel_state: Current kernel state
+            context: Additional context
+        """
+        entry = LogEntry(
+            timestamp=datetime.now(),
+            event_type=EventType.LTC_TRANSFER_EVALUATED,
+            kernel_state=kernel_state,
+            ssl_version=SSL_VERSION,
+            invariants_evaluated={},
+            resolution_outcome=ResolutionOutcome.STOP if verdict == "deny" else ResolutionOutcome.PROCEED,
+            context={
+                "source_domain": source_domain,
+                "target_domain": target_domain,
+                "logic_framework": logic_framework,
+                "verdict": verdict,
+                "reason_codes": reason_codes,
+                "failed_invariants": failed_invariants,
+                **(context or {})
+            },
+            message=f"LTC evaluation: {verdict} for transfer from {source_domain} to {target_domain}"
         )
         self.log(entry)
 

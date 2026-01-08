@@ -96,6 +96,17 @@ from .ail import (
     TERMINAL_AMBIGUITY_TEXT,
 )
 
+# LTC (Legitimate Transfer Constraint)
+from .ltc import (
+    LTCEnforcer,
+    LTCVerdict,
+    LTCViolation,
+    LTCEvaluation,
+    Domain,
+    TransferRequest,
+    check_domain_transfer,
+)
+
 __all__ = [
     # Core SSL
     "ClarityKernel",
@@ -153,4 +164,12 @@ __all__ = [
     "AILSession",
     "AILWrapper",
     "TERMINAL_AMBIGUITY_TEXT",
+    # LTC
+    "LTCEnforcer",
+    "LTCVerdict",
+    "LTCViolation",
+    "LTCEvaluation",
+    "Domain",
+    "TransferRequest",
+    "check_domain_transfer",
 ]
