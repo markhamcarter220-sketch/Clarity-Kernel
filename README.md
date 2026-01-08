@@ -2,13 +2,33 @@
 
 **Safety-Critical Reasoning Governance Framework with Bounded-Interface SAT Enforcement (w ≤ 3)**
 
-Version 1.1.0
+Version 1.2.0
 
 ## Overview
 
 The Clarity Kernel is a governance framework that enforces **when** reasoning, decisions, or actions are permitted to proceed. It does not generate answers—it determines **whether continuation is allowed**.
 
 This is safety-critical code. All invariant violations raise exceptions. Stop means stop.
+
+## Why This Exists
+
+Most systems fail not because they lack capability, but because they lack
+boundaries.
+
+The Clarity Kernel exists to enforce hard limits on reasoning and execution in
+systems where ambiguity, overreach, or implicit authority can cause harm. It is
+designed to fail closed, stop on uncertainty, and preserve human authority at
+all times.
+
+This framework deliberately prioritizes:
+- Determinism over convenience
+- STOP over guessing
+- Explicit authority over inferred intent
+- Structural clarity over optimization
+
+Clarity Kernel is not an agent, not a policy engine, and not a recommendation
+system. It is a governance layer that decides whether an operation may proceed
+at all.
 
 ## Core Principle
 
@@ -279,16 +299,28 @@ New input or resolved ambiguity resets the session.
 
 Non-ambiguity STOPs (I-2, I-3, etc.) pass through unchanged.
 
+## Roadmap
+
+Planned and potential future work:
+
+- v1.2 — Reference AIL (Adaptive Interaction Layer) wrapper
+- v1.3 — Pluggable invariant registry
+- v1.4 — Configurable audit log backends
+- v1.5 — Additional real-world examples (LLM tools, APIs, file systems)
+- v2.0 — Language-agnostic specification
+
+All roadmap items must preserve existing invariants and STOP semantics.
+
 ## License
 
 MIT
 
 ## Documentation
 
-See `SPECIFICATION.md` for the complete canonical specification (v1.1.0).
+See `SPECIFICATION.md` for the complete canonical specification (v1.2.0).
 
 ## Version
 
-SSL Version: v1.1.0
+SSL Version: v1.2.0
 Status: Canonical / Implementer-Facing
 Scope: Abstract / AI-native
