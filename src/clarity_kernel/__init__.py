@@ -93,8 +93,7 @@ from .logging import (
 from .ail import (
     AILSession,
     AILWrapper,
-    AILResponse,
-    AILResponseType,
+    TERMINAL_AMBIGUITY_TEXT,
 )
 
 __all__ = [
@@ -153,6 +152,5 @@ __all__ = [
     # AIL (Non-Normative)
     "AILSession",
     "AILWrapper",
-    "AILResponse",
-    "AILResponseType",
+    "TERMINAL_AMBIGUITY_TEXT",
 ]
