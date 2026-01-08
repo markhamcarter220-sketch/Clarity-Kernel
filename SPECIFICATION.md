@@ -149,6 +149,119 @@ Examples:
 
 ---
 
+## 5.8 Split-Brain Authority Axiom (SBAA)
+
+When two or more valid authorities issue contradictory directives, the system is **forbidden from arbitrating**.
+
+### Definition
+
+Let A₁ and A₂ be two authority tokens where:
+- verify(A₁) = TRUE ∧ verify(A₂) = TRUE
+- A₁.scope ⊇ required_scope ∧ A₂.scope ⊇ required_scope
+- A₁.directive CONFLICTS WITH A₂.directive
+
+Then:
+→ SystemState := FROZEN
+→ Execution := BLOCKED
+→ Escalation := MANDATORY
+
+### Rationale
+
+The system **cannot** and **must not** choose between valid conflicting authorities because:
+
+1. **Authority Laundering:** Choosing a winner creates synthetic authority that neither source provided
+2. **Non-Determinism:** Choice criteria (learned weights, heuristics) are not explicit in authority structure
+3. **Liability Transfer:** System assumes responsibility for decision that should remain with authorities
+4. **Legitimacy Violation:** Authority flows from humans to system, not system to humans
+
+### Prohibited Behaviors
+
+When authorities conflict, the system **must not**:
+- Choose based on timestamp (newer/older)
+- Choose based on source identity (rank/role)
+- Choose based on scope hierarchy (more/less specific)
+- Choose based on semantic interpretation of directives
+- Attempt to find "middle ground" or compromise
+- Execute either directive
+- Execute partial fulfillment of either directive
+
+### Required Behavior
+
+When authorities conflict, the system **must**:
+1. Detect conflict through structural comparison of directives
+2. Transition to SystemState: FROZEN immediately
+3. Log both authorities and their conflicting directives
+4. Block all execution until conflict is resolved by human
+5. Require explicit conflict resolution (new authority token with precedence specification)
+
+### Conflict Detection
+
+Two directives conflict if they cannot both be satisfied simultaneously:
+
+```
+conflict(directive₁, directive₂) :=
+  (directive₁ = "ALLOW X" ∧ directive₂ = "DENY X")
+  ∨ (directive₁ = "EXECUTE X" ∧ directive₂ = "HALT X")
+  ∨ (directive₁.action ∧ ¬directive₂.action for same resource)
+```
+
+### Resolution Mechanism
+
+Conflicts must be resolved **externally** by:
+1. Issuing a new authority token that explicitly supersedes one or both conflicting tokens
+2. Revoking one of the conflicting authority tokens
+3. Issuing a meta-authority token that specifies precedence rules
+
+The system **never** resolves conflicts internally.
+
+### Example: Split-Brain Scenario
+
+**Scenario:** Payment gateway receives contradictory commands
+
+```
+Authority A (Security Team):
+  source: "security_audit_team"
+  scope: "payment.control"
+  directive: "STOP_ALL_TRANSFERS"
+  signature: [valid]
+
+Authority B (Operations Director):
+  source: "ops_director"
+  scope: "payment.control"
+  directive: "RESUME_TRANSFERS_IMMEDIATELY"
+  signature: [valid]
+```
+
+**System Response:**
+```
+SystemState: FROZEN
+Reason: SBAA violation - conflicting valid authorities
+Authority_A: STOP_ALL_TRANSFERS (verified)
+Authority_B: RESUME_TRANSFERS_IMMEDIATELY (verified)
+Execution: BLOCKED
+Resolution: Awaiting HIL conflict resolution
+```
+
+**The system does NOT:**
+- Decide that "security > operations"
+- Decide that "newer directive supersedes older"
+- Attempt to compromise ("allow some transfers")
+- Execute either directive
+
+**The system logs and halts.**
+
+### Integration with I-2 (Authority Invariant)
+
+SBAA is an extension of I-2:
+- I-2 requires authority to be explicit and verifiable
+- SBAA requires that when multiple valid authorities conflict, the system cannot arbitrate
+
+Both enforce the principle: **Authority ≠ Capability**
+
+The system has the **capability** to choose, but lacks the **authority** to do so.
+
+---
+
 ## 7. CONTROL MODES
 
 ### 7.1 Momentary Authorization
@@ -275,6 +388,79 @@ Override is permitted only when:
 - all override actions are logged immutably
 
 Override does not remove invariants; it changes operating mode to **ABNORMAL**.
+
+### 10.1 ABNORMAL Mode Semantics
+
+When operating in ABNORMAL mode:
+
+**Invariants that STILL APPLY (non-overrideable):**
+- I-4 (Truth): Cannot claim ALLOWED while invariants unsatisfied
+- I-5 (Logging): All actions must be logged, nothing suppressed
+- I-6 (Silence): Cannot guess or infer to fill gaps
+
+**Invariants that MAY BE OVERRIDDEN (with explicit justification):**
+- I-1 (Clarity): May proceed with specific ambiguous elements IF:
+  - Ambiguous elements are explicitly enumerated
+  - Human accepts responsibility for ambiguity
+  - Justification is logged
+- I-2 (Authority): May proceed with alternative authority IF:
+  - Normal authority path is unavailable/broken
+  - Override authority is verifiable and logged
+  - Justification for override is documented
+- I-3 (Attention): May proceed with reduced attention IF:
+  - Risk is explicitly accepted by human
+  - Continuous monitoring alternative is documented
+  - Justification is logged
+- I-7 (Complexity): May proceed with w>3 IF:
+  - All unresolved variables enumerated explicitly
+  - Human accepts responsibility for each unresolved variable
+  - Justification for complexity is logged
+
+**Execution Rules in ABNORMAL Mode:**
+
+1. **Persistent Warning:** Every output MUST indicate ABNORMAL mode active
+2. **Explicit Responsibility:** Human who authorized override is recorded
+3. **Variable Enumeration:** All overridden constraints explicitly listed
+4. **Audit Trail:** Every action in ABNORMAL mode generates audit entry
+5. **No Silent Return:** Cannot transition back to NORMAL without explicit reset
+6. **Limited Duration:** Override must have expiry time or be manually revoked
+
+**What ABNORMAL Mode Is NOT:**
+
+- NOT a way to bypass safety for convenience
+- NOT a "try harder" mode
+- NOT a relaxation of all constraints
+- NOT permission to guess or infer
+- NOT a way to hide failures
+
+**What ABNORMAL Mode IS:**
+
+- Emergency mechanism when normal operation structurally impossible
+- Explicit transfer of risk from system to human
+- Visible, auditable deviation from normal constraints
+- Time-limited exception requiring justification
+
+### 10.2 Override Authorization
+
+Override requires:
+```
+OverrideToken {
+  human_authorizer: string (verifiable identity)
+  override_signature: bytes (cryptographic signature)
+  unsatisfiable_invariants: list[string] (e.g., ["I-1", "I-7"])
+  justification: string (why override necessary)
+  expiry_timestamp: int (override auto-revokes after this time)
+  responsibility_acknowledgment: bool (must be true)
+}
+```
+
+### 10.3 Return to Normal Operation
+
+Transitioning from ABNORMAL to NORMAL requires:
+1. All overridden invariants can now be satisfied, OR
+2. Explicit human decision to revoke override
+3. Audit log entry documenting transition
+4. Verification that no actions are pending in ABNORMAL state
 
 **Important constraint:**
 Override does not automatically relax `w ≤ 3`. If override would require exceeding `w`, HIL must explicitly assume responsibility for the additional unresolved variables, and those variables must be enumerated and logged.
