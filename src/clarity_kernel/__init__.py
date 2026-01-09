@@ -85,6 +85,7 @@ from .logging import (
     DecompositionStatus,
     LogSuppressionAttempt,
     LogMutationAttempt,
+    ChainIntegrityViolation,
     get_default_logger,
     set_default_logger,
 )
@@ -158,6 +159,7 @@ __all__ = [
     "DecompositionStatus",
     "LogSuppressionAttempt",
     "LogMutationAttempt",
+    "ChainIntegrityViolation",
     "get_default_logger",
     "set_default_logger",
     # AIL (Non-Normative)

@@ -27,6 +27,7 @@ from enum import Enum
 from typing import Any, Optional
 import json
 from pathlib import Path
+import hashlib
 
 
 # ============================================================================
@@ -101,6 +102,20 @@ class LogMutationAttempt(Exception):
         super().__init__(message)
 
 
+class ChainIntegrityViolation(Exception):
+    """
+    Raised when hash chain verification fails.
+
+    This indicates log tampering or corruption.
+    """
+
+    def __init__(self, message: str, failed_at_index: int, expected_hash: str, actual_hash: str):
+        super().__init__(message)
+        self.failed_at_index = failed_at_index
+        self.expected_hash = expected_hash
+        self.actual_hash = actual_hash
+
+
 # ============================================================================
 # DATA STRUCTURES
 # ============================================================================
@@ -109,9 +124,19 @@ class LogMutationAttempt(Exception):
 @dataclass(frozen=True)
 class LogEntry:
     """
-    Immutable audit log entry.
+    Immutable audit log entry with tamper-evident hash chain.
 
-    Contains all required fields per Section 13.
+    Contains all required fields per Section 13, plus cryptographic hash chain
+    for tamper detection.
+
+    Hash Chain Structure:
+    - event_id: Sequential counter (0, 1, 2, ...)
+    - prev_hash: SHA-256 hash of previous record (NULL for genesis)
+    - payload_hash: SHA-256 hash of this record's payload
+    - record_hash: SHA-256(prev_hash || payload_hash)
+
+    Any modification to historical records breaks the chain and is
+    mechanically detectable via verify_chain().
     """
     # Required core fields
     timestamp: datetime
@@ -145,9 +170,49 @@ class LogEntry:
     # Message
     message: str = ""
 
+    # Hash chain fields (added for tamper-evidence)
+    event_id: int = 0
+    prev_hash: str = "NULL"  # SHA-256 hash of previous record, or "NULL" for genesis
+    payload_hash: str = ""   # SHA-256 hash of this record's payload
+    record_hash: str = ""    # SHA-256(prev_hash || payload_hash)
+
     def to_dict(self) -> dict[str, Any]:
         """Converts log entry to dictionary for serialization."""
         return {
+            # Core fields
+            "timestamp": self.timestamp.isoformat(),
+            "event_type": self.event_type.value,
+            "kernel_state": self.kernel_state,
+            "ssl_version": self.ssl_version,
+            "invariants_evaluated": self.invariants_evaluated,
+            "measured_w": self.measured_w,
+            "unresolved_variables": self.unresolved_variables,
+            "decomposition_status": self.decomposition_status.value if self.decomposition_status else None,
+            "authority_source": self.authority_source,
+            "control_mode": self.control_mode,
+            "duration_in_state": self.duration_in_state,
+            "resolution_outcome": self.resolution_outcome.value if self.resolution_outcome else None,
+            "context": self.context,
+            "message": self.message,
+            # Hash chain fields
+            "event_id": self.event_id,
+            "prev_hash": self.prev_hash,
+            "payload_hash": self.payload_hash,
+            "record_hash": self.record_hash
+        }
+
+    def compute_payload_hash(self) -> str:
+        """
+        Computes SHA-256 hash of this record's payload.
+
+        The payload includes all fields EXCEPT the hash chain fields themselves.
+        This ensures the hash represents the actual event data.
+
+        Returns:
+            Hex-encoded SHA-256 hash
+        """
+        payload = {
+            "event_id": self.event_id,
             "timestamp": self.timestamp.isoformat(),
             "event_type": self.event_type.value,
             "kernel_state": self.kernel_state,
@@ -163,6 +228,26 @@ class LogEntry:
             "context": self.context,
             "message": self.message
         }
+        # Canonical JSON serialization (sorted keys for determinism)
+        payload_json = json.dumps(payload, sort_keys=True)
+        return hashlib.sha256(payload_json.encode('utf-8')).hexdigest()
+
+    @staticmethod
+    def compute_record_hash(prev_hash: str, payload_hash: str) -> str:
+        """
+        Computes the record hash from previous hash and payload hash.
+
+        record_hash = SHA-256(prev_hash || payload_hash)
+
+        Args:
+            prev_hash: Hash of previous record (or "NULL" for genesis)
+            payload_hash: Hash of current record's payload
+
+        Returns:
+            Hex-encoded SHA-256 hash
+        """
+        combined = f"{prev_hash}{payload_hash}"
+        return hashlib.sha256(combined.encode('utf-8')).hexdigest()
 
     def to_json(self) -> str:
         """Converts log entry to JSON string."""
@@ -176,13 +261,24 @@ class LogEntry:
 
 class AuditLogger:
     """
-    Immutable, append-only audit logger.
+    Immutable, append-only audit logger with tamper-evident hash chain.
 
     CRITICAL PROPERTIES:
     - Logs are never deleted or modified
     - All events are captured
     - No silent suppression
     - Violations of logging invariant raise exceptions
+    - Hash chain mechanically proves immutability
+
+    HASH CHAIN STRUCTURE:
+    Each record contains:
+    - event_id: Sequential counter (0, 1, 2, ...)
+    - prev_hash: SHA-256 hash of previous record
+    - payload_hash: SHA-256 hash of this record's payload
+    - record_hash: SHA-256(prev_hash || payload_hash)
+
+    Any modification to historical records breaks the chain and is
+    detectable via verify_chain().
     """
 
     def __init__(self, log_file: Optional[Path] = None, in_memory: bool = False):
@@ -198,6 +294,10 @@ class AuditLogger:
         self._entries: list[LogEntry] = []
         self._suppression_detected = False
 
+        # Hash chain state
+        self._next_event_id: int = 0
+        self._last_record_hash: str = "NULL"  # Genesis record has prev_hash = NULL
+
         # Create log file if specified
         if self._log_file:
             self._log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -206,7 +306,14 @@ class AuditLogger:
 
     def log(self, entry: LogEntry) -> None:
         """
-        Appends an immutable log entry.
+        Appends an immutable log entry with tamper-evident hash chain.
+
+        This method:
+        1. Assigns event_id (sequential counter)
+        2. Sets prev_hash to last record's hash
+        3. Computes payload_hash from entry data
+        4. Computes record_hash = SHA-256(prev_hash || payload_hash)
+        5. Appends the hash-chained entry
 
         Args:
             entry: The log entry to append
@@ -220,15 +327,45 @@ class AuditLogger:
                 attempted_event=entry.event_type.value
             )
 
+        # Import dataclasses.replace for creating modified frozen instance
+        from dataclasses import replace
+
+        # Build hash-chained entry
+        chained_entry = replace(
+            entry,
+            event_id=self._next_event_id,
+            prev_hash=self._last_record_hash
+        )
+
+        # Compute payload hash (based on event data)
+        payload_hash = chained_entry.compute_payload_hash()
+
+        # Compute record hash (chaining to previous record)
+        record_hash = LogEntry.compute_record_hash(
+            chained_entry.prev_hash,
+            payload_hash
+        )
+
+        # Create final entry with all hashes
+        final_entry = replace(
+            chained_entry,
+            payload_hash=payload_hash,
+            record_hash=record_hash
+        )
+
+        # Update chain state for next record
+        self._next_event_id += 1
+        self._last_record_hash = record_hash
+
         # Append to in-memory log
         if self._in_memory:
-            self._entries.append(entry)
+            self._entries.append(final_entry)
 
         # Append to file log
         if self._log_file:
             try:
                 with open(self._log_file, 'a') as f:
-                    f.write(entry.to_json() + '\n')
+                    f.write(final_entry.to_json() + '\n')
             except Exception as e:
                 # Logging failure is a critical error
                 self._suppression_detected = True
@@ -519,6 +656,89 @@ class AuditLogger:
             LogMutationAttempt: Always
         """
         raise LogMutationAttempt("Cannot delete log entries - append-only immutable log")
+
+    def verify_chain(self) -> bool:
+        """
+        Verifies the integrity of the hash chain.
+
+        This method proves that no records have been tampered with by:
+        1. Verifying each record's payload_hash matches its data
+        2. Verifying each record's record_hash = SHA-256(prev_hash || payload_hash)
+        3. Verifying the chain links correctly (record[i].prev_hash == record[i-1].record_hash)
+
+        Returns:
+            True if chain is valid
+
+        Raises:
+            ChainIntegrityViolation: If tampering is detected
+        """
+        if len(self._entries) == 0:
+            return True  # Empty chain is valid
+
+        # Verify genesis record
+        genesis = self._entries[0]
+        if genesis.event_id != 0:
+            raise ChainIntegrityViolation(
+                f"Genesis record has invalid event_id: {genesis.event_id} (expected 0)",
+                failed_at_index=0,
+                expected_hash="event_id=0",
+                actual_hash=f"event_id={genesis.event_id}"
+            )
+
+        if genesis.prev_hash != "NULL":
+            raise ChainIntegrityViolation(
+                f"Genesis record has invalid prev_hash: {genesis.prev_hash} (expected NULL)",
+                failed_at_index=0,
+                expected_hash="NULL",
+                actual_hash=genesis.prev_hash
+            )
+
+        # Verify each record
+        for i, entry in enumerate(self._entries):
+            # Verify event_id is sequential
+            if entry.event_id != i:
+                raise ChainIntegrityViolation(
+                    f"Record {i} has invalid event_id: {entry.event_id} (expected {i})",
+                    failed_at_index=i,
+                    expected_hash=f"event_id={i}",
+                    actual_hash=f"event_id={entry.event_id}"
+                )
+
+            # Verify payload_hash matches computed hash
+            computed_payload_hash = entry.compute_payload_hash()
+            if entry.payload_hash != computed_payload_hash:
+                raise ChainIntegrityViolation(
+                    f"Record {i} payload tampering detected: payload_hash mismatch",
+                    failed_at_index=i,
+                    expected_hash=computed_payload_hash,
+                    actual_hash=entry.payload_hash
+                )
+
+            # Verify record_hash = SHA-256(prev_hash || payload_hash)
+            computed_record_hash = LogEntry.compute_record_hash(
+                entry.prev_hash,
+                entry.payload_hash
+            )
+            if entry.record_hash != computed_record_hash:
+                raise ChainIntegrityViolation(
+                    f"Record {i} hash chain broken: record_hash mismatch",
+                    failed_at_index=i,
+                    expected_hash=computed_record_hash,
+                    actual_hash=entry.record_hash
+                )
+
+            # Verify chain links correctly (except for genesis)
+            if i > 0:
+                prev_entry = self._entries[i - 1]
+                if entry.prev_hash != prev_entry.record_hash:
+                    raise ChainIntegrityViolation(
+                        f"Record {i} chain link broken: prev_hash does not match previous record_hash",
+                        failed_at_index=i,
+                        expected_hash=prev_entry.record_hash,
+                        actual_hash=entry.prev_hash
+                    )
+
+        return True
 
 
 # ============================================================================
