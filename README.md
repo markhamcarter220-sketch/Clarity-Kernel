@@ -527,6 +527,41 @@ The Adaptive Interaction Layer (AIL) provides an optional wrapper for interactiv
 - AIL provides UX conveniences only
 - All invariants and STOP semantics remain unchanged
 
+### Non-Interference Axiom
+
+**AIL MUST NOT mutate request semantics, add assumptions, or override SSL verdicts.**
+
+**PERMITTED Actions:**
+- Request clarification for ambiguity
+- Return SSL decisions unchanged (pass-through)
+- Track session state (clarification attempts)
+
+**FORBIDDEN Actions:**
+- ❌ Add assumptions to requests
+- ❌ Rewrite constraints or definitions
+- ❌ Downgrade STOP → ALLOW verdicts
+- ❌ Mutate request data passed to SSL
+- ❌ Override SSL decisions based on "helpfulness"
+- ❌ Soften invariant requirements
+- ❌ Optimize for UX at expense of safety
+
+**Enforcement:**
+```python
+from clarity_kernel import AILWrapper, AILInterferenceViolation
+
+# Non-interference enforcement enabled by default
+ail = AILWrapper(kernel, enforce_noninterference=True)
+
+# AIL will raise AILInterferenceViolation if:
+# - Request is mutated
+# - Assumptions are added
+# - SSL decision is overridden
+```
+
+**Result:** UX never becomes a covert optimizer. SSL remains authoritative.
+
+See `tests/test_ail_noninterference.py` for 27 tests proving non-interference enforcement.
+
 ### Usage
 
 ```python

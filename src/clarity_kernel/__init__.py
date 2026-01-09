@@ -109,7 +109,10 @@ from .logging import (
 from .ail import (
     AILSession,
     AILWrapper,
+    AILInterferenceViolation,
     TERMINAL_AMBIGUITY_TEXT,
+    AIL_PERMITTED_ACTIONS,
+    AIL_FORBIDDEN_ACTIONS,
 )
 
 # LTC (Legitimate Transfer Constraint)
