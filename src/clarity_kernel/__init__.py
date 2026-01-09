@@ -44,6 +44,7 @@ from .invariants import (
     LoggingInvariantViolation,
     SilenceInvariantViolation,
     ComplexityInvariantViolation,
+    WCountingFraudViolation,
     validate_clarity,
     validate_authority,
     validate_attention,
@@ -60,6 +61,10 @@ from .invariants import (
     validate_token_expiry,
     MAX_TOKEN_AGE,
     TRUSTED_ISSUER_REGISTRY,
+    # W-counting fraud detection
+    detect_variable_bundling,
+    detect_probabilistic_collapse,
+    validate_material_classification,
 )
 
 # State Machine

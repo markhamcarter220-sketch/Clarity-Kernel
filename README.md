@@ -272,6 +272,90 @@ variables = [
 # w=2 (correctly reported) - requires human input for both
 ```
 
+**Mechanical Detection:**
+The kernel mechanically detects w-counting fraud:
+```python
+from clarity_kernel import detect_variable_bundling, detect_probabilistic_collapse, validate_material_classification
+
+# Detects bundling ("_and_", "_config", "_options", generic names)
+fraud = detect_variable_bundling(variables)
+
+# Detects guessing (variables resolved without explicit input)
+fraud = detect_probabilistic_collapse(variables_before, variables_after)
+
+# Detects misclassification (safety-critical marked non-material)
+validate_material_classification(variables, safety_critical_names={"dosage_mg", "patient_weight"})
+```
+See `examples/06_w_counting_fraud.py` for complete fraud detection demonstrations.
+
+### ⚠ DO NOT Bundle Multiple Concerns into One Variable
+
+```python
+# ✗ WRONG: Variable bundling to game w≤3
+variables = [
+    Variable("patient_config_and_dosage", resolved=False, material=True, value=None),  # FRAUD
+]
+# Hides 4 material concerns (dosage, weight, drug, route) in one variable
+# w=1 (fraudulent) - should be w=4
+```
+
+**Why this is forbidden:**
+- Artificially reduces w by hiding multiple material concerns
+- Violates I-7 enforcement through structural fraud
+- Detected by: name patterns ("_and_", "_config"), dict bundling
+
+**Correct:**
+```python
+# ✓ CORRECT: Separate variable for each material concern
+variables = [
+    Variable("dosage_mg", resolved=False, material=True, value=None),
+    Variable("patient_weight_kg", resolved=False, material=True, value=None),
+    Variable("drug_name", resolved=False, material=True, value=None),
+    Variable("route", resolved=False, material=True, value=None),
+]
+# w=4 (honest) - triggers STOP or DECOMPOSE (as required)
+```
+
+### ⚠ DO NOT Guess Values to Reduce w (Probabilistic Collapse)
+
+```python
+# ✗ WRONG: Guessing values to artificially reduce w
+# Before: w=3 (at limit)
+variables_before = [
+    Variable("dosage", resolved=False, material=True, value=None),
+    Variable("route", resolved=False, material=True, value=None),
+    Variable("frequency", resolved=False, material=True, value=None),
+]
+
+# After: Guess dosage and route to add 4th variable without exceeding w
+variables_after = [
+    Variable("dosage", resolved=True, material=True, value=50),  # GUESSED
+    Variable("route", resolved=True, material=True, value="oral"),  # GUESSED
+    Variable("frequency", resolved=False, material=True, value=None),
+    Variable("drug_name", resolved=False, material=True, value=None),  # New
+]
+# w=2 (fraudulent) - guessed to avoid w=4
+```
+
+**Why this is forbidden:**
+- Violates I-6 (Silence Invariant) - guessing is forbidden
+- Introduces assumptions without authority
+- May cause incorrect or unsafe behavior
+
+**Correct:**
+```python
+# ✓ CORRECT: STOP or DECOMPOSE when w would exceed 3
+if w_after_adding_variable > 3:
+    # Option 1: Request explicit values
+    raise ComplexityInvariantViolation("w=4 exceeds limit. Provide explicit values.")
+
+    # Option 2: Decompose into smaller requests
+    sub_request_1 = [Variable("dosage", ...)]  # w=1
+    sub_request_2 = [Variable("route", ...), Variable("frequency", ...)]  # w=2
+
+    # NEVER: Guess values to reduce w
+```
+
 ### ⚠ DO NOT Use Placeholder Authority Tokens in Production
 
 ```python

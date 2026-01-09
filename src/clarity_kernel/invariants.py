@@ -141,6 +141,40 @@ class ComplexityInvariantViolation(InvariantViolation):
         self.unresolved_variables = unresolved_variables
 
 
+class WCountingFraudViolation(ComplexityInvariantViolation):
+    """
+    Raised when w-counting is gamed through illegal patterns.
+
+    Illegal patterns include:
+    1. Variable bundling - combining multiple material concerns into one variable
+    2. Probabilistic collapse - guessing/inferring values to reduce w
+    3. Material misclassification - marking safety-critical variables as non-material
+
+    This is a specialized form of I-7 violation that represents fraudulent
+    attempts to bypass the w ≤ 3 constraint rather than legitimate complexity.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        fraud_type: str,
+        evidence: dict[str, Any],
+        context: Optional[dict[str, Any]] = None
+    ):
+        # Initialize with actual w (before gaming) if available
+        measured_w = evidence.get("actual_w", evidence.get("measured_w", 0))
+        unresolved = evidence.get("unresolved_variables", [])
+
+        super().__init__(
+            message=message,
+            measured_w=measured_w,
+            unresolved_variables=unresolved,
+            context=context
+        )
+        self.fraud_type = fraud_type
+        self.evidence = evidence
+
+
 # ============================================================================
 # DATA STRUCTURES
 # ============================================================================
@@ -720,6 +754,184 @@ def validate_complexity(
         )
 
     return w
+
+
+def detect_variable_bundling(variables: list[Variable]) -> Optional[WCountingFraudViolation]:
+    """
+    Detects illegal variable bundling - combining multiple material concerns into one variable.
+
+    Variable bundling is forbidden because it artificially reduces w by hiding multiple
+    unresolved material concerns inside a single variable.
+
+    Examples of illegal bundling:
+    - Variable("patient_dosage_and_route", ...) - combines dosage + route
+    - Variable("config", ...) - bundles multiple config parameters
+    - Variable("options", ...) - generic container hiding multiple concerns
+
+    Heuristics for detection:
+    1. Variable name contains "and", "or", "_config", "_options", "_params"
+    2. Variable name is overly generic ("data", "info", "config", "options", "params")
+    3. Variable value is a dict/tuple/list with multiple material elements
+
+    Args:
+        variables: List of all variables to check
+
+    Returns:
+        WCountingFraudViolation if bundling detected, None otherwise
+    """
+    # Suspicious name patterns that suggest bundling
+    bundling_keywords = ["_and_", "_or_", "_config", "_options", "_params", "_settings"]
+    generic_names = {"data", "info", "config", "options", "params", "settings", "args", "kwargs"}
+
+    for var in variables:
+        var_name_lower = var.name.lower()
+
+        # Check 1: Name contains bundling keywords
+        if any(keyword in var_name_lower for keyword in bundling_keywords):
+            return WCountingFraudViolation(
+                f"Variable bundling detected: '{var.name}' appears to bundle multiple concerns. "
+                f"Split into separate material variables.",
+                fraud_type="variable_bundling",
+                evidence={
+                    "variable_name": var.name,
+                    "pattern": "name_contains_bundling_keyword",
+                    "resolved": var.resolved,
+                    "material": var.material
+                }
+            )
+
+        # Check 2: Name is overly generic (only flag if material and unresolved)
+        if not var.resolved and var.material and var_name_lower in generic_names:
+            return WCountingFraudViolation(
+                f"Generic variable name detected: '{var.name}' is too generic and may hide bundled concerns. "
+                f"Use specific variable names that describe single concerns.",
+                fraud_type="generic_variable_name",
+                evidence={
+                    "variable_name": var.name,
+                    "pattern": "generic_name",
+                    "resolved": var.resolved,
+                    "material": var.material
+                }
+            )
+
+        # Check 3: Value is a dict/list/tuple with multiple elements (only if resolved)
+        if var.resolved and var.material and var.value is not None:
+            if isinstance(var.value, dict) and len(var.value) > 1:
+                return WCountingFraudViolation(
+                    f"Variable bundling detected: '{var.name}' contains dict with {len(var.value)} keys. "
+                    f"Each material concern should be a separate variable.",
+                    fraud_type="dict_bundling",
+                    evidence={
+                        "variable_name": var.name,
+                        "pattern": "dict_with_multiple_keys",
+                        "num_keys": len(var.value),
+                        "keys": list(var.value.keys())
+                    }
+                )
+
+    return None
+
+
+def detect_probabilistic_collapse(
+    variables_before: list[Variable],
+    variables_after: list[Variable]
+) -> Optional[WCountingFraudViolation]:
+    """
+    Detects illegal probabilistic collapse - guessing/inferring values to reduce w.
+
+    Probabilistic collapse is forbidden when values are guessed without explicit
+    authority to reduce w. This violates I-6 (Silence Invariant).
+
+    Detection approach:
+    - Compare variables before and after some operation
+    - If previously unresolved material variables become resolved without explicit input
+    - Raise fraud violation
+
+    Args:
+        variables_before: Variables before operation
+        variables_after: Variables after operation
+
+    Returns:
+        WCountingFraudViolation if probabilistic collapse detected, None otherwise
+    """
+    # Build maps of variables by name
+    vars_before_map = {v.name: v for v in variables_before}
+    vars_after_map = {v.name: v for v in variables_after}
+
+    collapsed_vars = []
+
+    for name in vars_before_map:
+        if name not in vars_after_map:
+            continue
+
+        var_before = vars_before_map[name]
+        var_after = vars_after_map[name]
+
+        # Check if unresolved material variable became resolved
+        if (not var_before.resolved and var_before.material and
+                var_after.resolved and var_after.material):
+            # This is suspicious - material variable went from unresolved to resolved
+            collapsed_vars.append({
+                "name": name,
+                "value_before": var_before.value,
+                "value_after": var_after.value
+            })
+
+    if collapsed_vars:
+        # Calculate actual w (before collapse)
+        actual_w = sum(1 for v in variables_before if not v.resolved and v.material)
+        # Calculate reported w (after collapse)
+        reported_w = sum(1 for v in variables_after if not v.resolved and v.material)
+
+        return WCountingFraudViolation(
+            f"Probabilistic collapse detected: {len(collapsed_vars)} material variable(s) "
+            f"resolved without explicit input. This violates I-6 (Silence Invariant). "
+            f"Actual w={actual_w}, reported w={reported_w}.",
+            fraud_type="probabilistic_collapse",
+            evidence={
+                "collapsed_variables": collapsed_vars,
+                "actual_w": actual_w,
+                "reported_w": reported_w,
+                "unresolved_variables": [v.name for v in variables_after if not v.resolved and v.material]
+            }
+        )
+
+    return None
+
+
+def validate_material_classification(
+    variables: list[Variable],
+    safety_critical_names: Optional[Set[str]] = None
+) -> None:
+    """
+    Validates that safety-critical variables are correctly marked as material.
+
+    This function can optionally take a set of known safety-critical variable names
+    and verify they are marked material=True.
+
+    Args:
+        variables: List of variables to validate
+        safety_critical_names: Optional set of variable names known to be safety-critical
+
+    Raises:
+        WCountingFraudViolation: If safety-critical variable marked as non-material
+    """
+    if safety_critical_names is None:
+        return
+
+    for var in variables:
+        if var.name in safety_critical_names and not var.material:
+            raise WCountingFraudViolation(
+                f"Material misclassification detected: '{var.name}' is safety-critical "
+                f"but marked as non-material. This is fraud to bypass w≤3 constraint.",
+                fraud_type="material_misclassification",
+                evidence={
+                    "variable_name": var.name,
+                    "marked_material": var.material,
+                    "should_be_material": True,
+                    "resolved": var.resolved
+                }
+            )
 
 
 # ============================================================================
