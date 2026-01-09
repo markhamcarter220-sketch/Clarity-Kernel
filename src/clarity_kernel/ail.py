@@ -1,6 +1,20 @@
 """
 Adaptive Interaction Layer (AIL)
 
+⚠ DEPRECATION NOTICE ⚠
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STATUS: NON-NORMATIVE (Exploratory Implementation)
+
+The AIL is NOT part of the canonical Clarity Kernel specification.
+It is an OPTIONAL, NON-NORMATIVE wrapper that may be removed or changed
+in future versions without notice.
+
+DO NOT rely on AIL for safety-critical or production use.
+Use the core ClarityKernel (SSL) directly for all production deployments.
+
+See SPECIFICATION.md Section 4.2 for the normative AIL definition.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 This module provides an OPTIONAL wrapper around the Clarity Kernel for
 interactive systems (e.g. chat interfaces, LLMs).
 
@@ -14,10 +28,22 @@ The AIL:
 The SSL remains authoritative and unchanged.
 """
 
+import warnings
+
 from typing import Optional
 import hashlib
 
 from clarity_kernel.ssl import ClarityKernel
+
+
+# Issue deprecation warning on import
+warnings.warn(
+    "AIL (Adaptive Interaction Layer) is NON-NORMATIVE and may be removed in future versions. "
+    "For production use, interact directly with ClarityKernel (SSL). "
+    "See SPECIFICATION.md Section 4.2.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 
 TERMINAL_AMBIGUITY_TEXT = (

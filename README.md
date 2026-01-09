@@ -244,6 +244,187 @@ If uncertain:
 
 **Silence is correct.**
 
+## Anti-Patterns (Forbidden)
+
+### ⚠ DO NOT Mark Safety-Critical Variables as Non-Material
+
+```python
+# ✗ WRONG: Gaming w≤3 by misclassifying material variables
+variables = [
+    Variable("dosage_mg", resolved=False, material=False, value=None),  # FRAUD
+    Variable("patient_weight", resolved=False, material=False, value=None),  # FRAUD
+]
+# w=0 (falsely reported) - actual w=2
+```
+
+**Why this is forbidden:**
+- Undermines the entire safety guarantee
+- Violates I-7 (Complexity Invariant) through fraud
+- See `docs/VARIABLES.md` for classification guide
+
+**Correct:**
+```python
+# ✓ CORRECT: Honest classification
+variables = [
+    Variable("dosage_mg", resolved=False, material=True, value=None),
+    Variable("patient_weight", resolved=False, material=True, value=None),
+]
+# w=2 (correctly reported) - requires human input for both
+```
+
+### ⚠ DO NOT Use Placeholder Authority Tokens in Production
+
+```python
+# ✗ WRONG: Placeholder signatures in production
+authority = AuthorityToken(
+    source="admin",
+    verifiable=True,
+    scope="*",
+    signature=b'\x00' * 64,  # Placeholder - NOT cryptographically signed
+    timestamp=int(time.time()),
+    nonce=os.urandom(32),
+    issuer_pubkey=b'\x00' * 32  # Placeholder
+)
+```
+
+**Why this is forbidden:**
+- Violates I-2 (Authority Invariant) - not verifiable
+- No cryptographic proof of authorization
+- Anyone can forge tokens
+
+**Correct:**
+```python
+# ✓ CORRECT: Real Ed25519 signature
+# See docs/AUTHORITY.md and examples/02_authority_token.py
+authority = issue_authority_token(
+    source="admin_alice",
+    scope="file.read",
+    signing_key=load_private_key()  # Real Ed25519 key
+)
+```
+
+### ⚠ DO NOT Guess or Infer Values to Bypass Invariants
+
+```python
+# ✗ WRONG: Inferring values to bypass I-6 (Silence)
+if not file_path_provided:
+    file_path = "/tmp/default.txt"  # Guessing
+```
+
+**Why this is forbidden:**
+- Violates I-6 (Silence Invariant)
+- Introduces assumptions user didn't make
+- May cause incorrect or unsafe behavior
+
+**Correct:**
+```python
+# ✓ CORRECT: Require explicit value or STOP
+if not file_path_provided:
+    raise ClarityInvariantViolation(
+        "file_path is ambiguous - must be explicitly provided",
+        ambiguous_elements=["file_path"]
+    )
+```
+
+### ⚠ DO NOT Retry Automatically After ImmediateStopTriggered
+
+```python
+# ✗ WRONG: Automatic retry after stop
+try:
+    execute_operation()
+except ImmediateStopTriggered:
+    time.sleep(1)
+    execute_operation()  # FORBIDDEN
+```
+
+**Why this is forbidden:**
+- Violates immediate stop semantics
+- Stop means stop (no retry, no partial completion)
+- Requires explicit human re-authorization
+
+**Correct:**
+```python
+# ✓ CORRECT: Log stop and escalate
+try:
+    execute_operation()
+except ImmediateStopTriggered as e:
+    logger.critical(f"STOP: {e.trigger}")
+    preserve_state_for_review()
+    notify_human_operator()
+    # Do NOT retry
+```
+
+### ⚠ DO NOT Arbitrate Between Conflicting Valid Authorities
+
+```python
+# ✗ WRONG: Choosing between conflicting authorities
+if authority_a.timestamp > authority_b.timestamp:
+    chosen_authority = authority_a  # Authority laundering
+```
+
+**Why this is forbidden:**
+- Violates SBAA (Split-Brain Authority Axiom)
+- Kernel cannot choose between valid authorities
+- Constitutes authority laundering
+
+**Correct:**
+```python
+# ✓ CORRECT: Detect conflict and FREEZE
+if detect_authority_conflict(authority_a, authority_b):
+    transition_to_frozen()
+    escalate_to_human_resolution()
+    # Do NOT execute
+```
+
+### ⚠ DO NOT Suppress or Modify Log Entries
+
+```python
+# ✗ WRONG: Filtering or suppressing logs
+def log_authorization(granted, authority_source, ...):
+    if not granted:
+        return  # Suppressing denial logs - FORBIDDEN
+```
+
+**Why this is forbidden:**
+- Violates I-5 (Logging Invariant)
+- All events must be logged immutably
+- Nothing suppressed, nothing mutated
+
+**Correct:**
+```python
+# ✓ CORRECT: Log everything, append-only
+def log_authorization(granted, authority_source, ...):
+    entry = create_log_entry(granted, authority_source, ...)
+    append_to_immutable_log(entry)  # All events logged
+```
+
+### ⚠ DO NOT Claim ALLOWED While Invariants Are Unsatisfied
+
+```python
+# ✗ WRONG: Claiming success while invariants violated
+response = PermissionResponse(
+    granted=True,
+    satisfied_invariants={"I-1", "I-2"},  # I-7 not satisfied
+    # ...
+)
+```
+
+**Why this is forbidden:**
+- Violates I-4 (Truth Invariant)
+- Misrepresents safety state
+- May enable unsafe execution
+
+**Correct:**
+```python
+# ✓ CORRECT: Deny if any invariant unsatisfied
+all_invariants = {"I-1", "I-2", "I-3", "I-4", "I-5", "I-6", "I-7"}
+if satisfied_invariants != all_invariants:
+    raise TruthInvariantViolation(
+        "Cannot claim ALLOWED with unsatisfied invariants",
+        unsatisfied_invariants=list(all_invariants - satisfied_invariants)
+    )
+```
+
 ## Canonical Statement
 
 > No clarity → no continuation
