@@ -38,6 +38,7 @@ from .invariants import (
     InvariantViolation,
     ClarityInvariantViolation,
     AuthorityInvariantViolation,
+    TokenValidationError,
     AttentionInvariantViolation,
     TruthInvariantViolation,
     LoggingInvariantViolation,
@@ -50,6 +51,15 @@ from .invariants import (
     validate_logging,
     validate_silence,
     validate_complexity,
+    # Authority token validation
+    register_trusted_issuer,
+    is_trusted_issuer,
+    check_nonce_replay,
+    check_scope_hierarchy,
+    verify_token_signature,
+    validate_token_expiry,
+    MAX_TOKEN_AGE,
+    TRUSTED_ISSUER_REGISTRY,
 )
 
 # State Machine
@@ -121,6 +131,7 @@ __all__ = [
     "InvariantViolation",
     "ClarityInvariantViolation",
     "AuthorityInvariantViolation",
+    "TokenValidationError",
     "AttentionInvariantViolation",
     "TruthInvariantViolation",
     "LoggingInvariantViolation",
@@ -133,6 +144,15 @@ __all__ = [
     "validate_logging",
     "validate_silence",
     "validate_complexity",
+    # Authority token validation
+    "register_trusted_issuer",
+    "is_trusted_issuer",
+    "check_nonce_replay",
+    "check_scope_hierarchy",
+    "verify_token_signature",
+    "validate_token_expiry",
+    "MAX_TOKEN_AGE",
+    "TRUSTED_ISSUER_REGISTRY",
     # State Machine
     "KernelState",
     "OperatingMode",
