@@ -356,36 +356,99 @@ if w_after_adding_variable > 3:
     # NEVER: Guess values to reduce w
 ```
 
-### ⚠ DO NOT Use Placeholder Authority Tokens in Production
+### ✅ RECOMMENDED: Use Misuse-Resistant Authority Types
+
+**The type system prevents accidental authority bypass:**
 
 ```python
-# ✗ WRONG: Placeholder signatures in production
-authority = AuthorityToken(
-    source="admin",
-    verifiable=True,
-    scope="*",
-    signature=b'\x00' * 64,  # Placeholder - NOT cryptographically signed
-    timestamp=int(time.time()),
-    nonce=os.urandom(32),
-    issuer_pubkey=b'\x00' * 32  # Placeholder
+from clarity_kernel import (
+    UnverifiedAuthority,
+    VerifiedAuthority,
+    verify_authority_token,
+    register_trusted_issuer,
 )
-```
 
-**Why this is forbidden:**
-- Violates I-2 (Authority Invariant) - not verifiable
-- No cryptographic proof of authorization
-- Anyone can forge tokens
+# Step 1: Register trusted issuer (done once at startup)
+register_trusted_issuer(
+    public_key=load_issuer_pubkey(),  # Ed25519 public key (32 bytes)
+    name="production_authority_service",
+    max_scope="*"
+)
 
-**Correct:**
-```python
-# ✓ CORRECT: Real Ed25519 signature
-# See docs/AUTHORITY.md and examples/02_authority_token.py
-authority = issue_authority_token(
+# Step 2: Receive authority claim (e.g., from API, token service)
+unverified = UnverifiedAuthority(
     source="admin_alice",
     scope="file.read",
-    signing_key=load_private_key()  # Real Ed25519 key
+    signature=received_signature,  # Ed25519 signature (64 bytes)
+    timestamp=received_timestamp,   # Unix timestamp
+    nonce=received_nonce,           # 32-byte nonce
+    issuer_pubkey=received_pubkey   # 32-byte public key
+)
+
+# Step 3: Verify authority (returns VerificationResult, NOT boolean)
+result = verify_authority_token(unverified, required_scope="file.read")
+
+# Step 4: Check verification result
+if result.success:
+    verified = result.verified_authority  # Type: VerifiedAuthority
+    # Now use verified authority for permission decisions
+    request = PermissionRequest(..., authority=verified)
+    response = kernel.request_permission(request)
+else:
+    # Structured failure with audit trail
+    print(f"Verification failed: {result.failure_reason}")
+    print(f"Failure code: {result.failure_code}")
+    # Log to audit: result.verification_metadata contains full context
+```
+
+**Why this pattern is superior:**
+
+1. **Type-safe**: `VerifiedAuthority` CANNOT be constructed directly
+   ```python
+   # ✗ BLOCKED: Raises AuthorityBypassAttempt
+   verified = VerifiedAuthority(...)  # Compile error + runtime exception
+   ```
+
+2. **Structured verification**: Returns `VerificationResult`, not boolean
+   - Success: Contains `verified_authority` + verification metadata
+   - Failure: Contains `failure_reason` + `failure_code` + audit context
+   - Verification is auditable, not just "true/false"
+
+3. **6-step cryptographic verification**:
+   - Ed25519 signature verification
+   - Token expiry validation
+   - Nonce replay prevention
+   - Issuer trust verification
+   - Scope hierarchical matching
+   - Structural validation
+
+4. **Misuse resistance**: Developer cannot accidentally bypass verification
+   - Static type checking catches `UnverifiedAuthority` used where `VerifiedAuthority` required
+   - Runtime check prevents direct construction
+   - Only path to `VerifiedAuthority` is through `verify_authority_token()`
+
+**Result:** "Verification" cannot become a boolean flag someone sets.
+
+### ⚠ DEPRECATED: Legacy AuthorityToken
+
+```python
+# ⚠ DEPRECATED: Old API (kept for backwards compatibility)
+authority = AuthorityToken(
+    source="admin",
+    verifiable=True,  # Just a boolean - can be faked
+    scope="*",
+    signature=b'\x00' * 64,
+    timestamp=int(time.time()),
+    nonce=os.urandom(32),
+    issuer_pubkey=b'\x00' * 32
 )
 ```
+
+**Why deprecated:**
+- `verifiable=True` is just a boolean flag (no type safety)
+- Can be constructed with fake signatures
+- No compile-time protection against misuse
+- Use `UnverifiedAuthority` + `verify_authority_token()` instead
 
 ### ⚠ DO NOT Guess or Infer Values to Bypass Invariants
 

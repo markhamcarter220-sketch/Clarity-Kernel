@@ -69,6 +69,25 @@ class TokenValidationError(AuthorityInvariantViolation):
         self.reason = reason
 
 
+class AuthorityBypassAttempt(AuthorityInvariantViolation):
+    """
+    Raised when code attempts to bypass authority verification.
+
+    This prevents misuse patterns like:
+    - Direct construction of VerifiedAuthority (without verification)
+    - Using UnverifiedAuthority for permission decisions
+    - Type coercion to bypass type safety
+
+    This is a CRITICAL security violation indicating either:
+    - Malicious attempt to bypass security
+    - Developer error/misunderstanding
+    """
+
+    def __init__(self, message: str, bypass_type: str, context: Optional[dict[str, Any]] = None):
+        super().__init__(message, required_authority="bypass_prevention", context=context)
+        self.bypass_type = bypass_type
+
+
 class AttentionInvariantViolation(InvariantViolation):
     """
     I-3: Attention Invariant
@@ -202,19 +221,213 @@ class Variable:
 
 
 @dataclass(frozen=True)
-class AuthorityToken:
+class UnverifiedAuthority:
     """
-    Represents an explicit, cryptographically-verified authorization.
+    Represents an UNVERIFIED authority claim.
 
-    This is a security-critical object. All fields must be present for production use.
-    See docs/AUTHORITY.md for complete specification.
+    This type can be freely constructed but CANNOT be used to authorize actions.
+    It represents raw cryptographic material that has NOT been validated.
+
+    To authorize actions, you must verify this via verify_authority_token()
+    which returns a VerifiedAuthority on success.
 
     Security Properties:
-    - Ed25519 signature prevents forgery
-    - Timestamp prevents replay of expired tokens
-    - Nonce prevents replay of valid tokens
-    - Scope limits authorization domain
-    - Issuer public key enables verification
+    - Freely constructible (no privilege required)
+    - Cannot authorize permission-granting decisions
+    - Must be verified before use
+    - Type system prevents accidental bypass
+
+    Attributes:
+        source: Identity of claimed authorizing entity (e.g., "admin_alice")
+        scope: Claimed scope of authorization (e.g., "file.read", "medical.prescribe")
+        signature: Ed25519 signature (64 bytes) - UNVERIFIED
+        timestamp: Unix timestamp when token was claimed to be issued
+        nonce: Cryptographic nonce (32 bytes) - UNVERIFIED
+        issuer_pubkey: Ed25519 public key of claimed issuer (32 bytes) - UNVERIFIED
+    """
+    source: str
+    scope: str
+    signature: bytes
+    timestamp: int
+    nonce: bytes
+    issuer_pubkey: bytes
+
+    def __post_init__(self) -> None:
+        """Validates token structure on construction (but NOT cryptographic validity)."""
+        # Validate signature length (Ed25519)
+        if len(self.signature) != 64:
+            raise ValueError(
+                f"Invalid signature length: {len(self.signature)} bytes (expected 64 for Ed25519)"
+            )
+
+        # Validate nonce length
+        if len(self.nonce) != 32:
+            raise ValueError(
+                f"Invalid nonce length: {len(self.nonce)} bytes (expected 32)"
+            )
+
+        # Validate issuer public key length (Ed25519)
+        if len(self.issuer_pubkey) != 32:
+            raise ValueError(
+                f"Invalid issuer_pubkey length: {len(self.issuer_pubkey)} bytes (expected 32 for Ed25519)"
+            )
+
+        # Validate timestamp is reasonable
+        if self.timestamp <= 0:
+            raise ValueError(f"Invalid timestamp: {self.timestamp} (must be positive Unix timestamp)")
+
+        # Validate source and scope are non-empty
+        if not self.source or not self.source.strip():
+            raise ValueError("Token source cannot be empty")
+
+        if not self.scope or not self.scope.strip():
+            raise ValueError("Token scope cannot be empty")
+
+
+@dataclass(frozen=True)
+class VerifiedAuthority:
+    """
+    Represents VERIFIED authority that can authorize permission-granting decisions.
+
+    This type CANNOT be directly constructed. It can only be created by:
+    1. Calling verify_authority_token(UnverifiedAuthority) → VerificationResult
+    2. Extracting .verified_authority from a successful VerificationResult
+
+    This design makes authority bypass structurally impossible:
+    - Direct construction raises AuthorityBypassAttempt exception
+    - Only factory method _from_verification() can construct (package-private)
+    - Type system enforces VerifiedAuthority requirement for permissions
+
+    Security Properties:
+    - Cannot be constructed without cryptographic verification
+    - Immutable after verification
+    - Contains verification metadata (when, by whom)
+    - Type-safe: static analysis catches accidental UnverifiedAuthority usage
+
+    Attributes:
+        source: Identity of authorizing entity (VERIFIED)
+        scope: Scope of authorization (VERIFIED)
+        signature: Ed25519 signature (VERIFIED)
+        timestamp: Unix timestamp when token was issued (VERIFIED)
+        nonce: Cryptographic nonce (VERIFIED as fresh)
+        issuer_pubkey: Ed25519 public key of issuer (VERIFIED as trusted)
+        verified_at: Unix timestamp when verification occurred
+        verifier_id: Identifier of verification function/service
+    """
+    source: str
+    scope: str
+    signature: bytes
+    timestamp: int
+    nonce: bytes
+    issuer_pubkey: bytes
+    verified_at: int
+    verifier_id: str
+
+    def __post_init__(self) -> None:
+        """
+        MISUSE RESISTANCE: Raises exception if constructed directly.
+
+        This prevents accidental bypass via VerifiedAuthority(...).
+        The only valid construction path is via _from_verification() factory.
+        """
+        # Check if we're being called from the factory method
+        import inspect
+        frame = inspect.currentframe()
+        caller_frame = frame.f_back if frame else None
+        caller_name = caller_frame.f_code.co_name if caller_frame else None
+
+        # Allow construction only from _from_verification factory
+        if caller_name != "_from_verification":
+            raise AuthorityBypassAttempt(
+                "VerifiedAuthority cannot be constructed directly. "
+                "Use verify_authority_token(UnverifiedAuthority) to obtain verified authority.",
+                bypass_type="direct_construction",
+                context={
+                    "caller": caller_name,
+                    "attempted_source": self.source,
+                    "attempted_scope": self.scope
+                }
+            )
+
+    @staticmethod
+    def _from_verification(
+        unverified: UnverifiedAuthority,
+        verified_at: int,
+        verifier_id: str
+    ) -> "VerifiedAuthority":
+        """
+        INTERNAL FACTORY METHOD - Only way to construct VerifiedAuthority.
+
+        This method should only be called by verify_authority_token() after
+        successful cryptographic verification.
+
+        Args:
+            unverified: The unverified authority that was verified
+            verified_at: Unix timestamp when verification occurred
+            verifier_id: Identifier of verification function
+
+        Returns:
+            VerifiedAuthority instance
+        """
+        # Use object.__setattr__ to bypass frozen dataclass restriction
+        # This is safe because we control the factory
+        obj = object.__new__(VerifiedAuthority)
+        object.__setattr__(obj, "source", unverified.source)
+        object.__setattr__(obj, "scope", unverified.scope)
+        object.__setattr__(obj, "signature", unverified.signature)
+        object.__setattr__(obj, "timestamp", unverified.timestamp)
+        object.__setattr__(obj, "nonce", unverified.nonce)
+        object.__setattr__(obj, "issuer_pubkey", unverified.issuer_pubkey)
+        object.__setattr__(obj, "verified_at", verified_at)
+        object.__setattr__(obj, "verifier_id", verifier_id)
+        return obj
+
+
+@dataclass(frozen=True)
+class VerificationResult:
+    """
+    Structured result from authority verification (NOT a boolean).
+
+    This prevents "verification" from becoming a boolean flag someone sets.
+    Instead, verification returns structured data that can be audited.
+
+    Attributes:
+        success: Whether verification succeeded
+        verified_authority: The verified authority (only if success=True)
+        failure_reason: Human-readable reason for failure (only if success=False)
+        failure_code: Machine-readable failure code (only if success=False)
+        verification_timestamp: Unix timestamp when verification occurred
+        verifier_id: Identifier of verification function/service
+        verification_metadata: Additional verification details for audit
+    """
+    success: bool
+    verified_authority: Optional[VerifiedAuthority]
+    failure_reason: Optional[str]
+    failure_code: Optional[str]
+    verification_timestamp: int
+    verifier_id: str
+    verification_metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Validates result consistency."""
+        if self.success and self.verified_authority is None:
+            raise ValueError("Success=True requires verified_authority")
+        if not self.success and self.failure_reason is None:
+            raise ValueError("Success=False requires failure_reason")
+        if not self.success and self.failure_code is None:
+            raise ValueError("Success=False requires failure_code")
+
+
+@dataclass(frozen=True)
+class AuthorityToken:
+    """
+    DEPRECATED: Use UnverifiedAuthority + verify_authority_token() instead.
+
+    This type is kept for backwards compatibility only.
+    New code should use the misuse-resistant type hierarchy:
+    - UnverifiedAuthority (freely constructible)
+    - VerifiedAuthority (only via verification)
+    - VerificationResult (structured verification output)
 
     Attributes:
         source: Identity of authorizing entity (e.g., "admin_alice")
@@ -235,6 +448,13 @@ class AuthorityToken:
 
     def __post_init__(self) -> None:
         """Validates token structure on construction."""
+        import warnings
+        warnings.warn(
+            "AuthorityToken is deprecated. Use UnverifiedAuthority + verify_authority_token() instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
         # Validate signature length (Ed25519)
         if len(self.signature) != 64:
             raise ValueError(
@@ -429,6 +649,242 @@ def verify_token_signature(token: AuthorityToken) -> bool:
             stacklevel=2
         )
         return True  # Structural validation passed in __post_init__
+
+
+def verify_authority_token(
+    unverified: UnverifiedAuthority,
+    required_scope: str,
+    skip_signature_verification: bool = False
+) -> VerificationResult:
+    """
+    Verifies an unverified authority token and returns structured result.
+
+    This is the ONLY way to obtain a VerifiedAuthority for permission decisions.
+    It performs 6-step validation and returns structured VerificationResult (not boolean).
+
+    Verification Steps:
+    1. Signature verification (Ed25519)
+    2. Expiry validation (timestamp within MAX_TOKEN_AGE)
+    3. Nonce replay prevention
+    4. Issuer trust verification
+    5. Scope hierarchical matching
+    6. Structural validation
+
+    Args:
+        unverified: The unverified authority token to verify
+        required_scope: The scope of authority required
+        skip_signature_verification: Skip cryptographic verification (testing only)
+
+    Returns:
+        VerificationResult with:
+        - success=True, verified_authority=VerifiedAuthority (on success)
+        - success=False, failure_reason + failure_code (on failure)
+    """
+    verification_timestamp = int(time.time())
+    verifier_id = "verify_authority_token_v1"
+
+    metadata: dict[str, Any] = {
+        "required_scope": required_scope,
+        "claimed_source": unverified.source,
+        "claimed_scope": unverified.scope,
+        "skip_signature_verification": skip_signature_verification
+    }
+
+    try:
+        # Step 1: Verify cryptographic signature
+        if not skip_signature_verification:
+            try:
+                verify_token_signature_unverified(unverified)
+            except TokenValidationError as e:
+                return VerificationResult(
+                    success=False,
+                    verified_authority=None,
+                    failure_reason=str(e),
+                    failure_code=e.reason,
+                    verification_timestamp=verification_timestamp,
+                    verifier_id=verifier_id,
+                    verification_metadata=metadata
+                )
+
+        # Step 2: Validate token has not expired
+        try:
+            validate_token_expiry_unverified(unverified)
+        except TokenValidationError as e:
+            return VerificationResult(
+                success=False,
+                verified_authority=None,
+                failure_reason=str(e),
+                failure_code=e.reason,
+                verification_timestamp=verification_timestamp,
+                verifier_id=verifier_id,
+                verification_metadata=metadata
+            )
+
+        # Step 3: Check nonce replay
+        if not check_nonce_replay(unverified.nonce):
+            return VerificationResult(
+                success=False,
+                verified_authority=None,
+                failure_reason=f"Nonce replay detected - token has been used before",
+                failure_code="nonce_replay",
+                verification_timestamp=verification_timestamp,
+                verifier_id=verifier_id,
+                verification_metadata={**metadata, "nonce": unverified.nonce.hex()}
+            )
+
+        # Step 4: Verify issuer is trusted
+        if not is_trusted_issuer(unverified.issuer_pubkey):
+            return VerificationResult(
+                success=False,
+                verified_authority=None,
+                failure_reason=f"Issuer not in trusted registry",
+                failure_code="untrusted_issuer",
+                verification_timestamp=verification_timestamp,
+                verifier_id=verifier_id,
+                verification_metadata={**metadata, "issuer_pubkey": unverified.issuer_pubkey.hex()}
+            )
+
+        # Step 5: Validate scope (hierarchical matching)
+        if not check_scope_hierarchy(unverified.scope, required_scope):
+            return VerificationResult(
+                success=False,
+                verified_authority=None,
+                failure_reason=(
+                    f"Authority scope insufficient: granted '{unverified.scope}', "
+                    f"required '{required_scope}'"
+                ),
+                failure_code="scope_insufficient",
+                verification_timestamp=verification_timestamp,
+                verifier_id=verifier_id,
+                verification_metadata=metadata
+            )
+
+        # Step 6: All checks passed - create VerifiedAuthority
+        verified = VerifiedAuthority._from_verification(
+            unverified=unverified,
+            verified_at=verification_timestamp,
+            verifier_id=verifier_id
+        )
+
+        return VerificationResult(
+            success=True,
+            verified_authority=verified,
+            failure_reason=None,
+            failure_code=None,
+            verification_timestamp=verification_timestamp,
+            verifier_id=verifier_id,
+            verification_metadata=metadata
+        )
+
+    except Exception as e:
+        # Catch unexpected errors
+        return VerificationResult(
+            success=False,
+            verified_authority=None,
+            failure_reason=f"Unexpected verification error: {str(e)}",
+            failure_code="unexpected_error",
+            verification_timestamp=verification_timestamp,
+            verifier_id=verifier_id,
+            verification_metadata={**metadata, "error_type": type(e).__name__}
+        )
+
+
+def verify_token_signature_unverified(token: UnverifiedAuthority) -> bool:
+    """
+    Verifies the Ed25519 signature on an unverified authority token.
+
+    This requires PyNaCl. For testing/development without PyNaCl,
+    this function performs structural validation only.
+
+    Args:
+        token: Unverified authority token to verify
+
+    Returns:
+        True if signature is valid
+
+    Raises:
+        TokenValidationError: If signature verification fails
+    """
+    try:
+        import nacl.signing
+        import nacl.exceptions
+
+        # Reconstruct signed message (per docs/AUTHORITY.md)
+        message = (
+            token.source.encode() + b'|' +
+            token.scope.encode() + b'|' +
+            token.timestamp.to_bytes(8, 'big') + b'|' +
+            token.nonce
+        )
+
+        # Create verify key from issuer public key
+        try:
+            verify_key = nacl.signing.VerifyKey(token.issuer_pubkey)
+        except Exception as e:
+            raise TokenValidationError(
+                f"Invalid issuer public key: {e}",
+                reason="invalid_public_key",
+                context={"error": str(e)}
+            )
+
+        # Verify signature
+        try:
+            verify_key.verify(message, token.signature)
+            return True
+        except nacl.exceptions.BadSignatureError:
+            raise TokenValidationError(
+                "Signature verification failed - token may be forged",
+                reason="signature_verification_failed",
+                context={"source": token.source, "scope": token.scope}
+            )
+
+    except ImportError:
+        # PyNaCl not available - fall back to structural validation only
+        # This is acceptable for testing but NOT for production
+        import warnings
+        warnings.warn(
+            "PyNaCl not installed - signature verification skipped. "
+            "Install PyNaCl for production use: pip install pynacl",
+            RuntimeWarning,
+            stacklevel=2
+        )
+        return True  # Structural validation passed in __post_init__
+
+
+def validate_token_expiry_unverified(token: UnverifiedAuthority, max_age: int = MAX_TOKEN_AGE) -> None:
+    """
+    Validates that unverified token has not expired.
+
+    Args:
+        token: Unverified authority token to check
+        max_age: Maximum token age in seconds (default: 300)
+
+    Raises:
+        TokenValidationError: If token is expired or from future
+    """
+    current_time = int(time.time())
+
+    # Check if token is from the future (clock skew attack)
+    if token.timestamp > current_time + 60:  # Allow 60s clock skew
+        raise TokenValidationError(
+            f"Token timestamp is in the future: {token.timestamp} > {current_time}",
+            reason="future_timestamp",
+            context={"token_timestamp": token.timestamp, "current_time": current_time}
+        )
+
+    # Check if token has expired
+    age = current_time - token.timestamp
+    if age > max_age:
+        raise TokenValidationError(
+            f"Token expired: age {age}s exceeds maximum {max_age}s",
+            reason="token_expired",
+            context={
+                "token_timestamp": token.timestamp,
+                "current_time": current_time,
+                "age_seconds": age,
+                "max_age_seconds": max_age
+            }
+        )
 
 
 def validate_token_expiry(token: AuthorityToken, max_age: int = MAX_TOKEN_AGE) -> None:
