@@ -153,6 +153,23 @@ from .ltc import (
     check_domain_transfer,
 )
 
+# KERNEL PATCH v1.1 - Temporal Coherence, ASK Resolution, and Rollback Hardening
+from .temporal_coherence import (
+    TemporalCoherenceTracker,
+    CoherenceState,
+    CoherenceViolation,
+    ProjectionType,
+    ProjectionResult,
+)
+
+from .ask_resolution import (
+    ASKResolutionTracker,
+    ASKEvent,
+    ASKResolutionStatus,
+    ASKLoopViolation,
+    ProjectionAction,
+)
+
 __all__ = [
     # Core SSL
     "ClarityKernel",
@@ -242,4 +259,15 @@ __all__ = [
     "Domain",
     "TransferRequest",
     "check_domain_transfer",
+    # KERNEL PATCH v1.1
+    "TemporalCoherenceTracker",
+    "CoherenceState",
+    "CoherenceViolation",
+    "ProjectionType",
+    "ProjectionResult",
+    "ASKResolutionTracker",
+    "ASKEvent",
+    "ASKResolutionStatus",
+    "ASKLoopViolation",
+    "ProjectionAction",
 ]

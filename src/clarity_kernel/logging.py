@@ -43,7 +43,12 @@ SSL_VERSION = "v1.2.0"  # Must match SPECIFICATION.md
 
 
 class EventType(Enum):
-    """Types of events that must be logged."""
+    """
+    Types of events that must be logged.
+
+    KERNEL PATCH v1.1 - Ledger Totality:
+    All cannon fires (ASK, SILENCE, projection, escalation, rollback) MUST be logged.
+    """
     INVARIANT_VIOLATION = "invariant_violation"
     BYPASS_ATTEMPT = "bypass_attempt"
     STATE_TRANSITION = "state_transition"
@@ -55,6 +60,18 @@ class EventType(Enum):
     DECOMPOSITION_ATTEMPT = "decomposition_attempt"
     ESCALATION = "escalation"
     LTC_TRANSFER_EVALUATED = "ltc_transfer_evaluated"
+
+    # KERNEL PATCH v1.1 - Cannon Fire Events (Ledger Totality)
+    ASK_ISSUED = "ask_issued"  # C-1 clarification request
+    ASK_RESOLVED = "ask_resolved"  # ASK answered by user
+    ASK_UNRESOLVED = "ask_unresolved"  # ASK not answered
+    ASK_TIMEOUT = "ask_timeout"  # ASK timed out, safe default taken
+    SILENCE = "silence"  # I-6 silence enforced (guessing forbidden)
+    PROJECTION = "projection"  # Π_t coherence repair projection
+    ROLLBACK = "rollback"  # State rollback to k* prefix
+    EJECT = "eject"  # Execution ejection
+    COHERENCE_VIOLATION = "coherence_violation"  # Temporal coherence hard cap
+    ASK_LOOP_TERMINATED = "ask_loop_terminated"  # Auto-SILENCE from ASK loop
 
 
 class ResolutionOutcome(Enum):
@@ -609,6 +626,279 @@ class AuditLogger:
             message=f"LTC evaluation: {verdict} for transfer from {source_domain} to {target_domain}"
         )
         self.log(entry)
+
+    # ========================================================================
+    # KERNEL PATCH v1.1 - Cannon Fire Logging (Ledger Totality)
+    # ========================================================================
+
+    def log_ask_issued(
+        self,
+        ask_id: str,
+        question: str,
+        kernel_state: str,
+        timeout_seconds: Optional[int] = None,
+        context: Optional[dict[str, Any]] = None
+    ) -> None:
+        """
+        Logs an ASK (C-1 clarification request) cannon fire.
+
+        KERNEL PATCH v1.1 - Ledger Totality:
+        Every cannon fire MUST be logged with full context.
+
+        Args:
+            ask_id: Unique ASK identifier
+            question: The clarification question
+            kernel_state: Current kernel state
+            timeout_seconds: Optional timeout
+            context: Additional context
+        """
+        entry = LogEntry(
+            timestamp=datetime.now(),
+            event_type=EventType.ASK_ISSUED,
+            kernel_state=kernel_state,
+            ssl_version=SSL_VERSION,
+            invariants_evaluated={},
+            resolution_outcome=ResolutionOutcome.ESCALATE,
+            context={
+                "ask_id": ask_id,
+                "question": question,
+                "timeout_seconds": timeout_seconds,
+                "triggering_rule": "C-1",
+                **(context or {})
+            },
+            message=f"ASK issued: {question}"
+        )
+        self.log(entry)
+
+    def log_ask_resolved(
+        self,
+        ask_id: str,
+        question: str,
+        response: str,
+        kernel_state: str,
+        context: Optional[dict[str, Any]] = None
+    ) -> None:
+        """Logs ASK resolution (user provided answer)."""
+        entry = LogEntry(
+            timestamp=datetime.now(),
+            event_type=EventType.ASK_RESOLVED,
+            kernel_state=kernel_state,
+            ssl_version=SSL_VERSION,
+            invariants_evaluated={},
+            resolution_outcome=ResolutionOutcome.PROCEED,
+            context={
+                "ask_id": ask_id,
+                "question": question,
+                "response": response,
+                "resolution_status": "resolved",
+                **(context or {})
+            },
+            message=f"ASK resolved: {ask_id}"
+        )
+        self.log(entry)
+
+    def log_ask_unresolved(
+        self,
+        ask_id: str,
+        question: str,
+        kernel_state: str,
+        reason: str = "no_response",
+        context: Optional[dict[str, Any]] = None
+    ) -> None:
+        """Logs ASK unresolved (no response received)."""
+        entry = LogEntry(
+            timestamp=datetime.now(),
+            event_type=EventType.ASK_UNRESOLVED,
+            kernel_state=kernel_state,
+            ssl_version=SSL_VERSION,
+            invariants_evaluated={},
+            resolution_outcome=ResolutionOutcome.STOP,
+            context={
+                "ask_id": ask_id,
+                "question": question,
+                "reason": reason,
+                "resolution_status": "unresolved",
+                **(context or {})
+            },
+            message=f"ASK unresolved: {ask_id} ({reason})"
+        )
+        self.log(entry)
+
+    def log_ask_timeout(
+        self,
+        ask_id: str,
+        question: str,
+        default_branch: str,
+        kernel_state: str,
+        context: Optional[dict[str, Any]] = None
+    ) -> None:
+        """Logs ASK timeout with safe default branch."""
+        entry = LogEntry(
+            timestamp=datetime.now(),
+            event_type=EventType.ASK_TIMEOUT,
+            kernel_state=kernel_state,
+            ssl_version=SSL_VERSION,
+            invariants_evaluated={},
+            resolution_outcome=ResolutionOutcome.PROCEED,
+            context={
+                "ask_id": ask_id,
+                "question": question,
+                "default_branch": default_branch,
+                "resolution_status": "timeout",
+                "irreversible_action": False,  # Timeout never performs irreversible action
+                **(context or {})
+            },
+            message=f"ASK timeout: {ask_id}, taking safe default: {default_branch}"
+        )
+        self.log(entry)
+
+    def log_silence(
+        self,
+        variable_name: str,
+        kernel_state: str,
+        reason: str,
+        context: Optional[dict[str, Any]] = None
+    ) -> None:
+        """
+        Logs SILENCE cannon fire (I-6 enforcement).
+
+        SILENCE is valid output when guessing is forbidden.
+        """
+        entry = LogEntry(
+            timestamp=datetime.now(),
+            event_type=EventType.SILENCE,
+            kernel_state=kernel_state,
+            ssl_version=SSL_VERSION,
+            invariants_evaluated={"I-6": True},  # Silence upholds I-6
+            resolution_outcome=ResolutionOutcome.STOP,
+            context={
+                "variable_name": variable_name,
+                "reason": reason,
+                "triggering_rule": "I-6",
+                **(context or {})
+            },
+            message=f"SILENCE: guessing forbidden for {variable_name}"
+        )
+        self.log(entry)
+
+    def log_projection(
+        self,
+        projection_type: str,
+        coh_before: float,
+        coh_after: float,
+        meanings_dropped: int,
+        kernel_state: str,
+        reason: str,
+        context: Optional[dict[str, Any]] = None
+    ) -> None:
+        """
+        Logs coherence repair projection Π_t.
+
+        KERNEL PATCH v1.1: Projections must be auditable.
+        """
+        entry = LogEntry(
+            timestamp=datetime.now(),
+            event_type=EventType.PROJECTION,
+            kernel_state=kernel_state,
+            ssl_version=SSL_VERSION,
+            invariants_evaluated={},
+            resolution_outcome=ResolutionOutcome.PROCEED,
+            context={
+                "projection_type": projection_type,
+                "coh_before": coh_before,
+                "coh_after": coh_after,
+                "meanings_dropped": meanings_dropped,
+                "reason": reason,
+                **(context or {})
+            },
+            message=f"Projection ({projection_type}): Coh {coh_before:.3f} → {coh_after:.3f}"
+        )
+        self.log(entry)
+
+    def log_rollback(
+        self,
+        rollback_to_event_id: int,
+        rollback_depth: int,
+        kernel_state: str,
+        reason: str,
+        context: Optional[dict[str, Any]] = None
+    ) -> None:
+        """
+        Logs state rollback to k* verified prefix.
+
+        KERNEL PATCH v1.1: Rollback depth = max(0, k* - 2)
+        """
+        entry = LogEntry(
+            timestamp=datetime.now(),
+            event_type=EventType.ROLLBACK,
+            kernel_state=kernel_state,
+            ssl_version=SSL_VERSION,
+            invariants_evaluated={},
+            resolution_outcome=ResolutionOutcome.STOP,
+            context={
+                "rollback_to_event_id": rollback_to_event_id,
+                "rollback_depth": rollback_depth,
+                "reason": reason,
+                **(context or {})
+            },
+            message=f"Rollback: depth={rollback_depth} to event_id={rollback_to_event_id}"
+        )
+        self.log(entry)
+
+    def log_coherence_violation(
+        self,
+        coherence: float,
+        max_coherence: float,
+        kernel_state: str,
+        context: Optional[dict[str, Any]] = None
+    ) -> None:
+        """Logs temporal coherence hard cap violation."""
+        entry = LogEntry(
+            timestamp=datetime.now(),
+            event_type=EventType.COHERENCE_VIOLATION,
+            kernel_state=kernel_state,
+            ssl_version=SSL_VERSION,
+            invariants_evaluated={},
+            resolution_outcome=ResolutionOutcome.ESCALATE,
+            context={
+                "coherence": coherence,
+                "max_coherence": max_coherence,
+                "triggering_rule": "unAI_OS_hard_cap",
+                **(context or {})
+            },
+            message=f"Coherence hard cap violated: {coherence:.3f} ≥ {max_coherence}"
+        )
+        self.log(entry)
+
+    def log_ask_loop_terminated(
+        self,
+        ask_streak: int,
+        max_streak: int,
+        kernel_state: str,
+        context: Optional[dict[str, Any]] = None
+    ) -> None:
+        """Logs auto-SILENCE from ASK loop termination."""
+        entry = LogEntry(
+            timestamp=datetime.now(),
+            event_type=EventType.ASK_LOOP_TERMINATED,
+            kernel_state=kernel_state,
+            ssl_version=SSL_VERSION,
+            invariants_evaluated={},
+            resolution_outcome=ResolutionOutcome.ESCALATE,
+            context={
+                "ask_streak": ask_streak,
+                "max_streak": max_streak,
+                "action": "auto_silence",
+                "triggering_rule": "loop_termination",
+                **(context or {})
+            },
+            message=f"ASK loop terminated: streak={ask_streak} ≥ {max_streak}, auto-SILENCE"
+        )
+        self.log(entry)
+
+    # ========================================================================
+    # End Cannon Fire Logging
+    # ========================================================================
 
     def get_all_entries(self) -> list[LogEntry]:
         """
